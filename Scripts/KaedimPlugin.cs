@@ -51,7 +51,6 @@ public class ResponseData
 }
 public class KaedimPlugin : EditorWindow
 {
-
     private class EditorCoroutine
     {
         public IEnumerator Routine { get; private set; }
@@ -75,9 +74,10 @@ public class KaedimPlugin : EditorWindow
     string jwt = "";
     string state = "";
     string refreshToken = "";
-    static string domain = "http://localhost:4200";
+    static string domain = "https://api.kaedim3d.com";
     List<Asset> assets = new List<Asset>();
     Asset selectedAsset = null;
+    string error = "";
 
     // Add menu named "KaedimPlugin" to the Window menu
     [MenuItem("Window/Kaedim Plugin")]
@@ -112,6 +112,10 @@ public class KaedimPlugin : EditorWindow
             {
                 PerformLoginRequest();
             }
+            if(error != "")
+            {
+                GUILayout.Label("Oops!" + error, EditorStyles.boldLabel);
+            }
         }
         if (state == "load_assets")
         {
@@ -126,11 +130,10 @@ public class KaedimPlugin : EditorWindow
             EditorGUILayout.BeginHorizontal();
             if (GUILayout.Button("Logout"))
             {
-                Debug.Log("Log out");
+                Logout();
             }
             if (GUILayout.Button("Refresh assets"))
             {
-                Debug.Log($"Refreshing assets");
                 PerformFetchAssetRequest();
             }
             EditorGUILayout.EndHorizontal();
@@ -141,10 +144,18 @@ public class KaedimPlugin : EditorWindow
                 string name = "Asset";
                 if (asset.image_tags.Count > 0)
                     name = asset.image_tags[0];
+                var originalColor = GUI.color;
+
+                // Check if the current asset is the selected one. If it is, change the button color.
+                if (asset == selectedAsset)
+                {
+                    GUI.color = Color.blue; // Or any color you want for the selected button.
+                }
                 if (GUILayout.Button(new GUIContent(name)))
                 {
-                    SelectAsset(asset);
+                    selectedAsset = asset;
                 }
+                GUI.color = originalColor;
             }
             EditorGUILayout.EndScrollView();
 
@@ -153,7 +164,6 @@ public class KaedimPlugin : EditorWindow
             if (GUILayout.Button("Import asset", GUILayout.Width(150)))
             {
                 StartEditorCoroutine(DownloadOBJ());
-                Debug.Log($"Import asset");
             }
             EditorGUILayout.EndHorizontal();
         }
@@ -210,16 +220,30 @@ public class KaedimPlugin : EditorWindow
 
         if (request.result == UnityWebRequest.Result.Success)
         {
+            error = "";
             EditorPrefs.SetString("DevID", devID);
             EditorPrefs.SetString("APIKey", apiKey);
             PerformJwtRequest();
         }
         else
         {
+            error = "incorrect credentials";
             Debug.Log("Request error: " + request.error);
         }
     }
 
+    void Logout()
+    {
+        EditorPrefs.SetString("DevID", "");
+        EditorPrefs.SetString("APIKey", "");
+        EditorPrefs.SetString("RefreshToken", "");
+        EditorPrefs.SetString("jwt", "");
+        devID = "";
+        apiKey = "";
+        jwt = "";
+        refreshToken = "";
+        state = "login";
+    }
     void PerformJwtRequest()
     {
         EditorApplication.update -= PerformJwtRequest; // Remove this function from the update delegate since it only needs to run once
@@ -251,9 +275,11 @@ public class KaedimPlugin : EditorWindow
             EditorPrefs.SetString("RefreshToken", refreshToken);
             EditorPrefs.SetString("jwt", jwt);
             state = "load_assets";
+            error = "";
         }
         else
         {
+            error = "incorrect credentials";
             Debug.Log("Request error: " + request.downloadHandler.text);
         }
     }
@@ -284,19 +310,15 @@ public class KaedimPlugin : EditorWindow
 
         if (request.result == UnityWebRequest.Result.Success)
         {
-            Debug.Log("Request completed. Output: " + request.downloadHandler.text);
             var data = JsonUtility.FromJson<AssetList>(request.downloadHandler.text);
             state = "asset_library";
             assets = data.assets;
-            Debug.Log("ParsedData: " + data.assets);
             foreach (Asset asset in data.assets)
             {
                 if (asset.image.Count <= 0)
                     continue;
-                Debug.Log("Asset: " + asset.image[0]);
-                StartEditorCoroutine(DownloadImage(asset));
+                // StartEditorCoroutine(DownloadImage(asset));
             }
-
         }
         else
         {
@@ -304,17 +326,16 @@ public class KaedimPlugin : EditorWindow
         }
     }
 
-
-    void SelectAsset(Asset asset)
-    {
-        selectedAsset = asset;
-    }
     IEnumerator DownloadImage(Asset data)
     {
         Debug.Log(data);
 
         UnityWebRequest www = UnityWebRequestTexture.GetTexture(data.image[0]);
         yield return www.SendWebRequest();
+        while (www.result == UnityWebRequest.Result.InProgress)
+        {
+            Thread.Sleep(100);
+        }
 
         if (www.result != UnityWebRequest.Result.Success)
         {
@@ -330,16 +351,13 @@ public class KaedimPlugin : EditorWindow
     {
         int len = selectedAsset.iterations.Count;
         string url = selectedAsset.iterations[len - 1].results.obj;
-        Debug.Log("Url" + selectedAsset.requestID + len +  url);
         using (UnityWebRequest www = UnityWebRequest.Get(url))
         {
             yield return www.SendWebRequest();
             while (www.result == UnityWebRequest.Result.InProgress)
             {
-                Debug.Log("Res" + www.result);
                 Thread.Sleep(100);
             }
-            Debug.Log("Res" + www.result);
             if (www.result != UnityWebRequest.Result.Success)
             {
                 Debug.Log(www.error);
@@ -349,7 +367,7 @@ public class KaedimPlugin : EditorWindow
                 // Or retrieve results as binary data
                 byte[] results = www.downloadHandler.data;
 
-                File.WriteAllBytes(Application.dataPath + "/downloaded.obj", results);
+                File.WriteAllBytes(Application.dataPath + "/" + selectedAsset.requestID + ".obj", results);
                 AssetDatabase.Refresh();
             }
         }
