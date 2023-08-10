@@ -1,6 +1,7 @@
 using UnityEngine;
 using UnityEditor;
 using System.Text;
+using UnityEngine.UI;
 using UnityEngine.Networking;
 using System.Threading;
 using System.Collections;
@@ -49,6 +50,7 @@ public class ResponseData
     public string jwt;
     public string message;
 }
+
 public class KaedimPlugin : EditorWindow
 {
     private class EditorCoroutine
@@ -78,6 +80,11 @@ public class KaedimPlugin : EditorWindow
     List<Asset> assets = new List<Asset>();
     Asset selectedAsset = null;
     string error = "";
+    string uploadError = "";
+    Texture2D selectedImage;
+    string imagePath;
+    string quality = "standard/high/ultra";
+    string polycount = "< 30,000";
 
     // Add menu named "KaedimPlugin" to the Window menu
     [MenuItem("Window/Kaedim Plugin")]
@@ -107,7 +114,7 @@ public class KaedimPlugin : EditorWindow
             GUILayout.Label("Enter your credentials", EditorStyles.boldLabel);
             devID = EditorGUILayout.TextField("Dev ID", devID);
             apiKey = EditorGUILayout.TextField("API Key", apiKey);
-            refreshToken = EditorGUILayout.TextField("Refresh Token", refreshToken);
+            // refreshToken = EditorGUILayout.TextField("Refresh Token", refreshToken);
             if (GUILayout.Button("Login"))
             {
                 PerformLoginRequest();
@@ -117,15 +124,19 @@ public class KaedimPlugin : EditorWindow
                 GUILayout.Label("Oops!" + error, EditorStyles.boldLabel);
             }
         }
-        if (state == "load_assets")
+        else if (state == "load_assets")
         {
             GUILayout.Label("Successful Login", EditorStyles.boldLabel);
             if (GUILayout.Button("Load assets"))
             {
                 PerformFetchAssetRequest();
             }
+            if (GUILayout.Button("Upload asset page"))
+            {
+                state = "upload_asset";
+            }
         }
-        if (state == "asset_library")
+        else if (state == "asset_library")
         {
             EditorGUILayout.BeginHorizontal();
             if (GUILayout.Button("Logout"))
@@ -137,6 +148,11 @@ public class KaedimPlugin : EditorWindow
                 PerformFetchAssetRequest();
             }
             EditorGUILayout.EndHorizontal();
+
+            if (GUILayout.Button("Upload asset page"))
+            {
+                state = "upload_asset";
+            }
 
             scrollPosition = EditorGUILayout.BeginScrollView(scrollPosition);
             foreach (Asset asset in assets)
@@ -167,9 +183,45 @@ public class KaedimPlugin : EditorWindow
             }
             EditorGUILayout.EndHorizontal();
         }
+        else if (state == "upload_asset")
+        {
+            if (GUILayout.Button("Asset Library Page"))
+            {
+                state = "load_assets";
+            }
+
+            // Add the "Upload Image" button
+            GUILayout.Label("Enter your preferences", EditorStyles.boldLabel);
+            quality = EditorGUILayout.TextField("Quality", quality);
+            polycount = EditorGUILayout.TextField("Polycount", polycount);
+            if (GUILayout.Button("Select Image"))
+            {
+                imagePath = EditorUtility.OpenFilePanel("Select an Image", "", "jpg,png");
+                if (!string.IsNullOrEmpty(imagePath))
+                {
+                    selectedImage = LoadImage(imagePath);
+                }
+            }
+
+            if (selectedImage != null)
+            {
+                GUILayout.Label(selectedImage, GUILayout.Width(selectedImage.width), GUILayout.Height(selectedImage.height));
+                GUILayout.Label("Selected Image: " + imagePath);
+            }
+
+            if (GUILayout.Button("Upload Image"))
+            {
+                StartEditorCoroutine(UploadImage());
+            }
+
+            if(uploadError != "")
+            {
+                GUILayout.Label("Oops!" + uploadError, EditorStyles.boldLabel);
+            }
+        }
+
         
     }
-
 
     private void StartEditorCoroutine(IEnumerator routine)
     {
@@ -196,12 +248,10 @@ public class KaedimPlugin : EditorWindow
         }
     }
 
-    void PerformLoginRequest()
+    bool tryLoginRequest(string destName)
     {
-        EditorApplication.update -= PerformLoginRequest; // Remove this function from the update delegate since it only needs to run once
-
         string url = domain + "/api/v1/registerHook";
-        string json = "{ \"devID\": \"" + devID + "\", \"destination\": \"https://unity.kaedim3d.com/webhook\" }";
+        string json = "{ \"devID\": \"" + devID + "\", \"destination\": \"" + destName + "\" }";
         var request = new UnityWebRequest(url, "POST");
         byte[] bodyRaw = Encoding.UTF8.GetBytes(json);
         request.uploadHandler = (UploadHandler)new UploadHandlerRaw(bodyRaw);
@@ -221,14 +271,50 @@ public class KaedimPlugin : EditorWindow
         if (request.result == UnityWebRequest.Result.Success)
         {
             error = "";
+            string responseData = request.downloadHandler.text;
+            ResponseData response = JsonUtility.FromJson<ResponseData>(responseData);
+
+            Debug.Log("Data received: " + responseData);
+
+            if (response.message == "Webhook already registered") return false;
+
+            jwt = response.jwt;
+            Debug.Log("JWT: " + jwt);
             EditorPrefs.SetString("DevID", devID);
             EditorPrefs.SetString("APIKey", apiKey);
-            PerformJwtRequest();
+
+            state = "load_assets";
+            error = "";
+            return true;
         }
         else
         {
             error = "incorrect credentials";
             Debug.Log("Request error: " + request.error);
+            return false;
+        }
+    }
+
+    void PerformLoginRequest()
+    {
+        EditorApplication.update -= PerformLoginRequest; // Remove this function from the update delegate since it only needs to run once
+
+        string destName = "http://example.com/invalid-webhook";
+        int maxAttempts = 3;
+        int attempts = 0;
+        while (attempts < maxAttempts)
+        {
+            if (tryLoginRequest(destName))
+            {
+                Debug.Log("Registration successful on attempt " + (attempts+1));
+                break;
+            }
+            destName += "a";
+            attempts ++;
+        }
+        if (attempts == maxAttempts)
+        {
+            error = "Error trying to login, check credentials";
         }
     }
 
@@ -243,6 +329,10 @@ public class KaedimPlugin : EditorWindow
         jwt = "";
         refreshToken = "";
         state = "login";
+        imagePath = "";
+        selectedImage = null;
+        quality = "";
+        polycount = "";
     }
     void PerformJwtRequest()
     {
@@ -284,7 +374,6 @@ public class KaedimPlugin : EditorWindow
         }
     }
 
-
     void PerformFetchAssetRequest()
     {
         EditorApplication.update -= PerformFetchAssetRequest; // Remove this function from the update delegate since it only needs to run once
@@ -312,13 +401,16 @@ public class KaedimPlugin : EditorWindow
         {
             var data = JsonUtility.FromJson<AssetList>(request.downloadHandler.text);
             state = "asset_library";
-            assets = data.assets;
+            List<Asset> filteredData = new List<Asset>();
             foreach (Asset asset in data.assets)
             {
-                if (asset.image.Count <= 0)
-                    continue;
-                // StartEditorCoroutine(DownloadImage(asset));
+                if (asset.image_tags[0] != "" 
+                    && asset.iterations[asset.iterations.Count - 1].status == "completed")
+                {
+                    filteredData.Add(asset);
+                }
             }
+            assets = filteredData;
         }
         else
         {
@@ -373,4 +465,82 @@ public class KaedimPlugin : EditorWindow
         }
     }
 
+    Texture2D LoadImage(string path)
+    {
+        byte[] imageData = System.IO.File.ReadAllBytes(path);
+        Texture2D texture = new Texture2D(2, 2);
+        texture.LoadImage(imageData);
+        return texture;
+    }
+
+    IEnumerator UploadImage()
+    {
+        string[] allowedQualityValues = new[] { "standard", "high", "ultra" };
+
+        if (imagePath == "")
+        {
+            uploadError = "Must Select an Image";
+            yield break;
+        }
+        
+        if (!Array.Exists(allowedQualityValues, q => q.ToLower() == quality.ToLower()))
+        {
+            uploadError = "Invalid quality value. Allowed values are 'standard', 'high', and 'ultra'";
+            yield break;
+        }
+
+        if (int.TryParse(polycount, out int pcount))
+        {
+            if (pcount <= 0 && pcount > 30000)
+            {
+                uploadError = "Invalid Polycount value, must be less than 30000";
+                yield break;
+            }
+        }
+
+        byte[] imageBytes = System.IO.File.ReadAllBytes(imagePath);
+        Debug.Log("Image bytes length: " + imageBytes.Length);
+
+        string url = domain + "/api/v1/process";
+        string fileName = System.IO.Path.GetFileName(imagePath);
+
+        List<IMultipartFormSection> formData = new List<IMultipartFormSection>();
+        formData.Add(new MultipartFormDataSection("devID", "1483c860-1d71-4a90-aea9-ca8ec4a24d48"));
+        formData.Add(new MultipartFormFileSection("image", imageBytes, "image.png", "image/png"));
+        formData.Add(new MultipartFormDataSection("LoQ", quality));
+        formData.Add(new MultipartFormDataSection("polycount", polycount));
+
+
+        Debug.Log("about to send request");
+
+        UnityWebRequest www = UnityWebRequest.Post(url, formData);
+        www.SetRequestHeader("X-API-Key", apiKey);
+        www.SetRequestHeader("Authorization", jwt);
+
+        yield return www.SendWebRequest();
+
+        while (www.result == UnityWebRequest.Result.InProgress)
+        {
+            Thread.Sleep(100);
+        }
+        if (www.result == UnityWebRequest.Result.Success)
+        {
+            Debug.Log("Image uploaded successfully");
+            // Reset any necessary variables or display messages
+        }
+        else
+        {
+            Debug.LogError("Failed to upload image: " + www.error);
+            Debug.Log("Response: " + www.downloadHandler.text);
+            Debug.Log("Response Code: " + www.responseCode);
+            // Display error message or handle the failure
+        }
+        uploadError = "";
+        quality = "";
+        polycount = "";
+        selectedImage = null;
+        imagePath = "";
+
+    }
 }
+
