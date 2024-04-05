@@ -114,7 +114,7 @@ public class KaedimPlugin : EditorWindow
             GUILayout.Label("Enter your credentials", EditorStyles.boldLabel);
             devID = EditorGUILayout.TextField("Dev ID", devID);
             apiKey = EditorGUILayout.TextField("API Key", apiKey);
-            // refreshToken = EditorGUILayout.TextField("Refresh Token", refreshToken);
+            refreshToken = EditorGUILayout.TextField("Refresh Token", refreshToken);
             if (GUILayout.Button("Login"))
             {
                 PerformLoginRequest();
@@ -504,12 +504,11 @@ public class KaedimPlugin : EditorWindow
         string url = domain + "/api/v1/process";
         string fileName = System.IO.Path.GetFileName(imagePath);
 
-        List<IMultipartFormSection> formData = new List<IMultipartFormSection>();
-        formData.Add(new MultipartFormDataSection("devID", "1483c860-1d71-4a90-aea9-ca8ec4a24d48"));
-        formData.Add(new MultipartFormFileSection("image", imageBytes, "image.png", "image/png"));
-        formData.Add(new MultipartFormDataSection("LoQ", quality));
-        formData.Add(new MultipartFormDataSection("polycount", polycount));
-
+        var formData = new List<IMultipartFormSection>();
+        formData.Add(new MultipartFormDataSection("devID", devID));
+        formData.Add(new MultipartFormFileSection("image", imageBytes, fileName, "image/png"));
+        formData.Add(new MultipartFormDataSection("LoQ", quality.ToString()));
+        formData.Add(new MultipartFormDataSection("polycount", polycount.ToString()));
 
         Debug.Log("about to send request");
 
